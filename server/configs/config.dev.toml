@@ -1,0 +1,6 @@
+[configDB]
+    host            = "127.0.0.1"
+    port            = 32768
+    user            = "postgres"
+    password        = "password"
+    dbname          = "postgres"
