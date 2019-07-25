@@ -1,12 +1,14 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"strings"
 
+	"github.com/go-websocket/server/models"
 	"github.com/gorilla/websocket"
 	"github.com/novalagung/gubrak"
 )
@@ -17,7 +19,10 @@ const MESSAGE_NEW_USER = "New User"
 const MESSAGE_CHAT = "Chat"
 const MESSAGE_LEAVE = "Leave"
 
-var connections = make([]*WebSocketConnection, 0)
+var (
+	conn        *sql.DB
+	connections = make([]*WebSocketConnection, 0)
+)
 
 type (
 	SocketPayload struct {
@@ -37,28 +42,35 @@ type (
 )
 
 func main() {
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		content, err := ioutil.ReadFile("../client/index.html")
-		if err != nil {
-			http.Error(w, "Could not open Request file", http.StatusInternalServerError)
-			return
-		}
-		fmt.Fprintf(w, "%s", content)
-	})
-
-	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		currentGorillaConn, err := websocket.Upgrade(w, r, w.Header(), 1024, 1024)
-		if err != nil {
-			http.Error(w, "Could Not Open Websocket Connection ", http.StatusInternalServerError)
-		}
-		username := r.URL.Query().Get("username")
-		currentConn := WebSocketConnection{Conn: currentGorillaConn, Username: username}
-		connections = append(connections, &currentConn)
-		go handleIO(&currentConn, connections)
-	})
-
+	conn := models.Connect()
+	if conn == nil {
+		log.Println("Tidak Menggunakan Database")
+	}
+	http.HandleFunc("/", Index)
+	http.HandleFunc("/ws", WSwebsocket)
 	fmt.Println("Server Starting at :8080")
 	http.ListenAndServe(":8080", nil)
+}
+
+func Index(w http.ResponseWriter, r *http.Request) {
+	content, err := ioutil.ReadFile("../client/index.html")
+	if err != nil {
+		http.Error(w, "Could not open Request file", http.StatusInternalServerError)
+		return
+	}
+	fmt.Fprintf(w, "%s", content)
+}
+
+func WSwebsocket(w http.ResponseWriter, r *http.Request) {
+	currentGorillaConn, err := websocket.Upgrade(w, r, w.Header(), 1024, 1024)
+	if err != nil {
+		http.Error(w, "Could Not Open Websocket Connection ", http.StatusInternalServerError)
+	}
+
+	username := r.URL.Query().Get("username")
+	currentConn := WebSocketConnection{Conn: currentGorillaConn, Username: username}
+	connections = append(connections, &currentConn)
+	go handleIO(&currentConn, connections)
 }
 
 func handleIO(currentConn *WebSocketConnection, connections []*WebSocketConnection) {
@@ -99,7 +111,12 @@ func broadcastMessage(currentConn *WebSocketConnection, kind, message string) {
 		if eachConn == currentConn {
 			continue
 		}
-		log.Println(currentConn.Username, " dan ", message)
+		if conn != nil {
+			err := models.InsertChat(currentConn.Username, message)
+			if err != nil {
+				log.Println("Error Insert : ", err)
+			}
+		}
 		eachConn.WriteJSON(SocketResponse{
 			From:    currentConn.Username,
 			Type:    kind,
